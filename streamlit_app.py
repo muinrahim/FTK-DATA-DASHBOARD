@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go  # <--- NEW: Needed for layering averages!
 import psycopg2 
 from psycopg2.extras import RealDictCursor
 import io
@@ -67,14 +68,42 @@ def generate_template_excel():
         template_df.to_excel(writer, index=False)
     return output.getvalue()
 
-def create_radar_chart(row, title):
+def create_radar_chart(row, title, avg_row=None):
     cat_display = ['Global', 'Resilient', 'Innovative', 'Trustworthy', 'Talent']
     try:
+        # 1. Get Student Scores
         scr = [float(row.get(c, row.get(c.lower(), 50))) for c in cat_display]
-        df_fig = pd.DataFrame(dict(r=scr + [scr[0]], theta=cat_display + [cat_display[0]]))
-        fig = px.line_polar(df_fig, r='r', theta='theta', line_close=True, title=title)
-        fig.update_traces(fill='toself', fillcolor='rgba(0, 114, 178, 0.4)')
-        fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100])))
+        
+        # 2. Start building the layered figure
+        fig = go.Figure()
+        
+        # Layer 1: The Student (Blue)
+        fig.add_trace(go.Scatterpolar(
+            r=scr + [scr[0]],
+            theta=cat_display + [cat_display[0]],
+            fill='toself',
+            name='Student Score',
+            line_color='rgb(0, 114, 178)',
+            fillcolor='rgba(0, 114, 178, 0.5)'
+        ))
+        
+        # Layer 2: The Cohort Average (Orange)
+        if avg_row is not None:
+            avg_scr = [float(avg_row.get(c, avg_row.get(c.lower(), 50))) for c in cat_display]
+            fig.add_trace(go.Scatterpolar(
+                r=avg_scr + [avg_scr[0]],
+                theta=cat_display + [cat_display[0]],
+                fill='toself',
+                name='Session Average',
+                line_color='rgb(213, 94, 0)',
+                fillcolor='rgba(213, 94, 0, 0.3)' # Lighter transparency so we can see the student behind it
+            ))
+
+        fig.update_layout(
+            title=title,
+            polar=dict(radialaxis=dict(visible=True, range=[0, 100])),
+            showlegend=True
+        )
         return fig
     except Exception as e:
         return None
@@ -87,7 +116,6 @@ def main_dashboard():
         st.session_state.update(logged_in=False, username="", role="lecturer")
         st.rerun()
     
-    # --- NEW: Visual Role Indicator ---
     is_admin = (st.session_state['role'] == 'admin')
     role_icon = "🛡️ Admin" if is_admin else "👨‍🏫 Lecturer"
     st.info(f"Welcome back, **{st.session_state['username']}**! You are logged in as: **{role_icon}**")
@@ -100,6 +128,7 @@ def main_dashboard():
         if not df.empty:
             name_col = 'Student Name' if 'Student Name' in df.columns else 'student name'
             matrix_col = 'Matrix Number' if 'Matrix Number' in df.columns else 'matrix number'
+            session_col = 'Session' if 'Session' in df.columns else 'session'
             
             df['Display'] = df[name_col] + " (" + df[matrix_col] + ")"
             sm = st.text_input("🔍 Search Matrix Number:")
@@ -114,7 +143,18 @@ def main_dashboard():
                 selected_student = df[df['Display'] == sel_display].iloc[0]
             
             if selected_student is not None:
-                chart = create_radar_chart(selected_student, selected_student['Display'])
+                # --- NEW: Calculate the Cohort Average ---
+                student_session = selected_student[session_col]
+                df_cohort = df[df[session_col] == student_session]
+                
+                avg_data = {}
+                for trait in ['Global', 'Resilient', 'Innovative', 'Trustworthy', 'Talent']:
+                    t_col = trait if trait in df_cohort.columns else trait.lower()
+                    avg_data[trait] = df_cohort[t_col].astype(float).mean() if not df_cohort[t_col].empty else 0
+
+                # Generate the layered chart
+                chart_title = f"{selected_student['Display']} vs {student_session} Average"
+                chart = create_radar_chart(selected_student, chart_title, avg_data)
                 if chart: st.plotly_chart(chart, use_container_width=True)
         else:
             st.info("Database is empty. Please add data in 'Data Entry' first.")
@@ -176,7 +216,6 @@ def main_dashboard():
             st.divider()
             st.header("⚙️ Admin Settings & Controls")
             
-            # NEW: User Account Creation
             with st.expander("👤 Create New User Account"):
                 with st.form("create_user"):
                     new_u = st.text_input("New Username")
@@ -227,10 +266,7 @@ def main_dashboard():
                     name_col = 'Student Name' if 'Student Name' in df_view.columns else 'student name'
                     matrix_col = 'Matrix Number' if 'Matrix Number' in df_view.columns else 'matrix number'
                     
-                    # --- NEW: Search Bar for Deletion ---
                     search_del = st.text_input("🔍 Search Name or Matrix to Delete:", key="search_del_input")
-                    
-                    # Filter the table based on search
                     if search_del:
                         mask = df_view[name_col].str.contains(search_del, case=False, na=False) | \
                                df_view[matrix_col].str.contains(search_del, case=False, na=False)
@@ -238,10 +274,7 @@ def main_dashboard():
                     else:
                         df_display = df_view
                     
-                    # Show the filtered table
                     st.dataframe(df_display[['id', name_col, matrix_col]], use_container_width=True)
-                    
-                    # Delete Execution
                     if not df_display.empty:
                         target_id = st.number_input("Enter Student ID to Delete", step=1, min_value=0, key="del_stu")
                         if st.button("Delete Student", type="primary"):
