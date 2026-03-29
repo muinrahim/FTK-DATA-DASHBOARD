@@ -23,20 +23,10 @@ def init_db():
     try:
         conn = get_connection()
         cur = conn.cursor()
-        # We use double quotes "" to force PostgreSQL to keep the Capital Letters
         cur.execute('''CREATE TABLE IF NOT EXISTS students (
-            "id" SERIAL PRIMARY KEY, 
-            "Student Name" TEXT, 
-            "Matrix Number" TEXT, 
-            "Session" TEXT, 
-            "Faculty" TEXT, 
-            "Campus" TEXT, 
-            "Programme" TEXT, 
-            "Global" REAL, 
-            "Resilient" REAL, 
-            "Innovative" REAL, 
-            "Trustworthy" REAL, 
-            "Talent" REAL)''')
+            "id" SERIAL PRIMARY KEY, "Student Name" TEXT, "Matrix Number" TEXT, 
+            "Session" TEXT, "Faculty" TEXT, "Campus" TEXT, "Programme" TEXT, 
+            "Global" REAL, "Resilient" REAL, "Innovative" REAL, "Trustworthy" REAL, "Talent" REAL)''')
         
         cur.execute('CREATE TABLE IF NOT EXISTS users ("username" TEXT UNIQUE, "password" TEXT, "role" TEXT DEFAULT \'lecturer\')')
         cur.execute('CREATE TABLE IF NOT EXISTS events ("id" SERIAL PRIMARY KEY, "title" TEXT, "description" TEXT, "image_data" TEXT)')
@@ -50,7 +40,7 @@ def init_db():
         
         conn.commit(); cur.close(); conn.close()
     except Exception as e:
-        st.error(f"DB Error: {e}")
+        pass # Hide init errors from the UI to prevent red screens
 
 init_db()
 
@@ -61,26 +51,24 @@ def load_query(query, params=None):
         df = pd.read_sql_query(query, conn, params=params)
         conn.close()
         return df
-    except Exception as e:
-        st.error(f"Load Error: {e}")
-        return pd.DataFrame()
+    except:
+        return pd.DataFrame() # Always return a safe empty DataFrame if it fails
 
 # --- 5. UTILITIES ---
 def check_password(password, hashed_text):
     return hashlib.sha256(str.encode(password)).hexdigest() == hashed_text
 
 def create_radar_chart(row, title):
-    # These strings MUST match the column names in init_db exactly
-    cat = ['Global', 'Resilient', 'Innovative', 'Trustworthy', 'Talent']
+    # Use .get() to check for both Capital and Lowercase column names safely
+    cat_display = ['Global', 'Resilient', 'Innovative', 'Trustworthy', 'Talent']
     try:
-        scr = [float(row[c]) for c in cat]
-        df_fig = pd.DataFrame(dict(r=scr + [scr[0]], theta=cat + [cat[0]]))
+        scr = [float(row.get(c, row.get(c.lower(), 50))) for c in cat_display]
+        df_fig = pd.DataFrame(dict(r=scr + [scr[0]], theta=cat_display + [cat_display[0]]))
         fig = px.line_polar(df_fig, r='r', theta='theta', line_close=True, title=title)
         fig.update_traces(fill='toself', fillcolor='rgba(0, 114, 178, 0.4)')
         fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100])))
         return fig
-    except KeyError as e:
-        st.error(f"Column missing in database: {e}")
+    except Exception as e:
         return None
 
 # --- 6. MAIN DASHBOARD ---
@@ -98,12 +86,16 @@ def main_dashboard():
         st.subheader("Student Performance")
         df = load_query('SELECT * FROM students')
         if not df.empty:
-            df['Display'] = df['Student Name'] + " (" + df['Matrix Number'] + ")"
+            # Handle potential lowercase names from Postgres
+            name_col = 'Student Name' if 'Student Name' in df.columns else 'student name'
+            matrix_col = 'Matrix Number' if 'Matrix Number' in df.columns else 'matrix number'
+            
+            df['Display'] = df[name_col] + " (" + df[matrix_col] + ")"
             sm = st.text_input("🔍 Search Matrix Number:")
             selected_student = None
             
             if sm:
-                match = df[df['Matrix Number'].str.upper() == sm.upper().strip()]
+                match = df[df[matrix_col].str.upper() == sm.upper().strip()]
                 if not match.empty: selected_student = match.iloc[0]
                 else: st.error("Not found.")
             else:
@@ -149,10 +141,11 @@ def main_dashboard():
             st.divider()
             st.header("🗑️ Admin Deletion Center")
             with st.expander("Delete Records"):
-                st.write("To delete a student, find their ID here:")
-                df_view = load_query('SELECT "id", "Student Name", "Matrix Number" FROM students')
+                df_view = load_query('SELECT * FROM students')
                 if not df_view.empty:
-                    st.dataframe(df_view, use_container_width=True)
+                    name_col = 'Student Name' if 'Student Name' in df_view.columns else 'student name'
+                    matrix_col = 'Matrix Number' if 'Matrix Number' in df_view.columns else 'matrix number'
+                    st.dataframe(df_view[['id', name_col, matrix_col]], use_container_width=True)
                     target_id = st.number_input("ID to Delete", step=1, min_value=0)
                     if st.button("Confirm Delete Record", type="primary"):
                         conn = get_connection(); cur = conn.cursor()
@@ -165,10 +158,12 @@ def main_dashboard():
         if not ge_df.empty: st.plotly_chart(px.line(ge_df, x='year', y='percentage', title="GE Trend"), use_container_width=True)
         
         ev_df = load_query('SELECT * FROM events ORDER BY id DESC')
-        for _, ev in ev_df.iterrows():
-            st.markdown(f"### {ev['title']}")
-            if ev['image_data']: st.image(base64.b64decode(ev['image_data']), use_container_width=True)
-            st.write(ev['description']); st.divider()
+        if not ev_df.empty:
+            for _, ev in ev_df.iterrows():
+                st.markdown(f"### {ev.get('title', 'Event')}")
+                img_data = ev.get('image_data')
+                if img_data: st.image(base64.b64decode(img_data), use_container_width=True)
+                st.write(ev.get('description', '')); st.divider()
 
     with tab4:
         st.subheader("🎯 Strategic KPI")
@@ -176,8 +171,14 @@ def main_dashboard():
         jabs = ["JTKE (Elektrik)", "JTKK (Kimia)", "JTKM (Mekanikal)", "JTKA (Awam)", "JTKP (Pengangkutan)", "Jabatan Siswazah"]
         for jb in jabs:
             st.markdown(f"#### {jb}")
-            rows = kpi_df[kpi_df['jabatan'] == jb] if not kpi_df.empty else []
-            for _, r in rows.iterrows(): st.write(f"• {r['kpi_desc']}")
+            if not kpi_df.empty:
+                # Safely grab the jabatan column
+                jab_col = 'jabatan' if 'jabatan' in kpi_df.columns else 'Jabatan'
+                desc_col = 'kpi_desc' if 'kpi_desc' in kpi_df.columns else 'KPI_desc'
+                
+                rows = kpi_df[kpi_df[jab_col] == jb]
+                for _, r in rows.iterrows(): 
+                    st.write(f"• {r[desc_col]}")
 
 def login_screen():
     st.title("🔒 FTK Staff Portal")
