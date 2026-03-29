@@ -9,7 +9,7 @@ import base64
 # --- 1. PAGE CONFIG ---
 st.set_page_config(page_title="UTHM FTK Dashboard", page_icon="🎓", layout="wide")
 
-# --- 2. SESSION STATE INITIALIZATION (CRITICAL: MUST BE AT TOP) ---
+# --- 2. SESSION STATE INITIALIZATION ---
 if 'logged_in' not in st.session_state:
     st.session_state['logged_in'] = False
 if 'username' not in st.session_state:
@@ -76,7 +76,7 @@ def generate_template_excel():
 # --- 7. LOGIN SCREEN ---
 def login_screen():
     st.title("🔒 FTK Staff Portal")
-    t1, t2 = st.tabs(["Login", "Register"])
+    t1, t2 = st.tabs(["Login", "Create Account"])
     with t1:
         with st.form("login_form"):
             u = st.text_input("Username")
@@ -121,15 +121,19 @@ def main_dashboard():
     role_name = "🛡️ Admin" if st.session_state['role'] == 'admin' else "👨‍🏫 Lecturer"
     st.markdown(f"*User: **{st.session_state['username']}** ({role_name})*")
     
-    t1, t2, t3, t4 = st.tabs(["📊 Charts", "📝 Data Entry", "🏛️ Faculty Info", "🎯 KPI Jabatan"])
+    # Define Tabs Clearly
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 Student Spider Charts", "📝 Data Entry", "🏛️ Faculty Info", "🎯 KPI Jabatan"])
     
-    with t1:
+    # --- TAB 1: CHARTS ---
+    with tab1:
+        st.subheader("Student & Session Performance")
         df = load_data()
         df['Display'] = df['Student Name'] + " (" + df['Matrix Number'] + ")"
         sm = st.text_input("🔍 Quick Search by Matrix Number:")
         if sm:
             match = df[df['Matrix Number'].str.upper() == sm.upper().strip()]
             if not match.empty: st.plotly_chart(create_radar_chart(match.iloc[0], f"Profile: {match.iloc[0]['Display']}"), use_container_width=True)
+            else: st.error("Student not found.")
         else:
             c1, c2 = st.columns(2)
             fs = c1.selectbox("Filter Session:", ["All"] + list(df['Session'].unique()))
@@ -141,9 +145,11 @@ def main_dashboard():
                 sel = st.selectbox("Select Student:", f_df['Display'])
                 st.plotly_chart(create_radar_chart(f_df[f_df['Display'] == sel].iloc[0], sel), use_container_width=True)
 
-    with t2:
+    # --- TAB 2: DATA ENTRY ---
+    with tab2:
         st.subheader("Add Student Data")
         st.download_button("📥 Download Excel Template", data=generate_template_excel(), file_name="FTK_Template.xlsx")
+        
         up = st.file_uploader("Upload Batch File (Excel/CSV)", type=["csv", "xlsx"])
         if up:
             try:
@@ -153,6 +159,7 @@ def main_dashboard():
                     conn = sqlite3.connect('gritt_database.db'); udf.to_sql('students', conn, if_exists='append', index=False); conn.close()
                     st.success("Batch uploaded!"); st.rerun()
             except Exception as e: st.error(e)
+            
         st.divider()
         with st.form("manual_entry_form"):
             st.markdown("### Manual Student Entry")
@@ -160,24 +167,39 @@ def main_dashboard():
             name = c1.text_input("Name"); mat = c2.text_input("Matrix"); sess = c3.selectbox("Session", ["2024/2025", "2025/2026"])
             prog = st.text_input("Programme (e.g. KNT)")
             sc = st.columns(5)
-            g=sc[0].number_input("G",0,100,50); r=sc[1].number_input("R",0,100,50); i=sc[2].number_input("I",0,100,50); t1=sc[3].number_input("T1",0,100,50); t2=sc[4].number_input("T2",0,100,50)
+            g=sc[0].number_input("Global",0,100,50); r=sc[1].number_input("Resilient",0,100,50); i=sc[2].number_input("Innov",0,100,50); t1=sc[3].number_input("Trust",0,100,50); t2=sc[4].number_input("Talent",0,100,50)
             if st.form_submit_button("Save Student"):
                 conn = sqlite3.connect('gritt_database.db')
                 conn.execute('INSERT INTO students VALUES (?,?,?,?,?,?,?,?,?,?,?)', (name, mat, sess, 'FTK', 'Pagoh', prog, g, r, i, t1, t2))
                 conn.commit(); conn.close(); st.success("Saved!"); st.rerun()
 
+        # --- ADMIN DELETE SECTION (UPGRADED) ---
         if st.session_state['role'] == 'admin':
             st.divider()
-            st.markdown("### 🗑️ Admin: Delete Duplicates")
+            st.markdown("### 🗑️ Admin: Search & Delete Records")
             df_manage = load_data()
-            st.dataframe(df_manage[['rowid', 'Student Name', 'Matrix Number', 'Session', 'Programme']], use_container_width=True)
-            rid = st.number_input("Enter RowID to Delete:", min_value=1, step=1)
-            if st.button("❌ Execute Delete", type="primary"):
-                conn = sqlite3.connect('gritt_database.db')
-                conn.execute('DELETE FROM students WHERE rowid=?', (rid,))
-                conn.commit(); conn.close(); st.success(f"Row {rid} deleted!"); st.rerun()
+            if not df_manage.empty:
+                search_term = st.text_input("🔍 Search Student to Delete:", placeholder="Name or Matrix...")
+                if search_term:
+                    df_filtered = df_manage[df_manage['Student Name'].str.contains(search_term, case=False, na=False) | df_manage['Matrix Number'].str.contains(search_term, case=False, na=False)]
+                else:
+                    df_filtered = df_manage.head(10)
+                
+                st.dataframe(df_filtered[['rowid', 'Student Name', 'Matrix Number', 'Session', 'Programme']], use_container_width=True)
+                
+                if not df_filtered.empty:
+                    delete_options = {f"{row['Student Name']} ({row['Matrix Number']}) [ID: {row['rowid']}]": row['rowid'] for _, row in df_filtered.iterrows()}
+                    selected_to_delete = st.selectbox("Select exact record to remove:", options=list(delete_options.keys()))
+                    if st.button("❌ Execute Permanent Delete", type="primary"):
+                        target_id = delete_options[selected_to_delete]
+                        conn = sqlite3.connect('gritt_database.db')
+                        conn.execute('DELETE FROM students WHERE rowid=?', (target_id,))
+                        conn.commit(); conn.close()
+                        st.success(f"Deleted {selected_to_delete}")
+                        st.rerun()
 
-    with t3:
+    # --- TAB 3: FACULTY INFO ---
+    with tab3:
         ca, cb = st.columns([1, 2])
         with ca:
             g_df = get_ge_data()
@@ -186,7 +208,7 @@ def main_dashboard():
                 st.plotly_chart(px.line(g_df, x='year', y='percentage', markers=True, title="GE Trend").update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)'), use_container_width=True)
                 if st.session_state['role'] == 'admin':
                     with st.form("ge_form"):
-                        y = st.number_input("Year", 2020, 2100, 2025); p = st.number_input("%", 0.0, 100.0, 85.0)
+                        y = st.number_input("Year", 2020, 2100, 2025); p = st.number_input("GE %", 0.0, 100.0, 85.0)
                         if st.form_submit_button("Update GE"):
                             conn = sqlite3.connect('gritt_database.db'); conn.execute('INSERT OR REPLACE INTO ge_data VALUES (?,?)', (y, p)); conn.commit(); conn.close(); st.rerun()
         with cb:
@@ -201,7 +223,8 @@ def main_dashboard():
                         conn = sqlite3.connect('gritt_database.db'); conn.execute('DELETE FROM events WHERE id=?', (ev['id'],)); conn.commit(); conn.close(); st.rerun()
                 st.divider()
 
-    with t4:
+    # --- TAB 4: KPI JABATAN ---
+    with tab4:
         st.subheader("🎯 KPI Jabatan Targets")
         k_df = get_kpi_data()
         jabs = ["JTKE (Elektrik)", "JTKK (Kimia)", "JTKM (Mekanikal)", "JTKA (Awam)", "JTKP (Pengangkutan)", "Jabatan Siswazah"]
