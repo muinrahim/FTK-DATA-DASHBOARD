@@ -40,7 +40,7 @@ def init_db():
         
         conn.commit(); cur.close(); conn.close()
     except Exception as e:
-        pass # Hide init errors from the UI to prevent red screens
+        pass 
 
 init_db()
 
@@ -52,14 +52,13 @@ def load_query(query, params=None):
         conn.close()
         return df
     except:
-        return pd.DataFrame() # Always return a safe empty DataFrame if it fails
+        return pd.DataFrame() 
 
 # --- 5. UTILITIES ---
 def check_password(password, hashed_text):
     return hashlib.sha256(str.encode(password)).hexdigest() == hashed_text
 
 def create_radar_chart(row, title):
-    # Use .get() to check for both Capital and Lowercase column names safely
     cat_display = ['Global', 'Resilient', 'Innovative', 'Trustworthy', 'Talent']
     try:
         scr = [float(row.get(c, row.get(c.lower(), 50))) for c in cat_display]
@@ -86,7 +85,6 @@ def main_dashboard():
         st.subheader("Student Performance")
         df = load_query('SELECT * FROM students')
         if not df.empty:
-            # Handle potential lowercase names from Postgres
             name_col = 'Student Name' if 'Student Name' in df.columns else 'student name'
             matrix_col = 'Matrix Number' if 'Matrix Number' in df.columns else 'matrix number'
             
@@ -139,6 +137,31 @@ def main_dashboard():
 
         if is_admin:
             st.divider()
+            
+            # --- RESTORED: GE & KPI MANAGEMENT ---
+            st.header("⚙️ Admin Settings (GE & KPI)")
+            c_ge, c_kp = st.columns(2)
+            
+            with c_ge:
+                with st.form("admin_ge"):
+                    st.subheader("Update GE %")
+                    gy, gp = st.number_input("Year", 2024), st.number_input("Value", 0.0, 100.0, 95.0)
+                    if st.form_submit_button("Save GE"):
+                        conn = get_connection(); cur = conn.cursor()
+                        cur.execute('INSERT INTO ge_data ("year", "percentage") VALUES (%s,%s) ON CONFLICT ("year") DO UPDATE SET "percentage" = EXCLUDED.percentage', (gy, gp))
+                        conn.commit(); conn.close(); st.success("GE Saved!"); st.rerun()
+            
+            with c_kp:
+                jabs = ["JTKE (Elektrik)", "JTKK (Kimia)", "JTKM (Mekanikal)", "JTKA (Awam)", "JTKP (Pengangkutan)", "Jabatan Siswazah"]
+                with st.form("admin_kpi"):
+                    st.subheader("Add KPI")
+                    jb, kd = st.selectbox("Dept", jabs), st.text_area("Target")
+                    if st.form_submit_button("Add KPI"):
+                        conn = get_connection(); cur = conn.cursor()
+                        cur.execute('INSERT INTO kpi_data ("jabatan", "kpi_desc") VALUES (%s,%s)', (jb, kd))
+                        conn.commit(); conn.close(); st.success("KPI Added!"); st.rerun()
+
+            st.divider()
             st.header("🗑️ Admin Deletion Center")
             with st.expander("Delete Records"):
                 df_view = load_query('SELECT * FROM students')
@@ -164,6 +187,8 @@ def main_dashboard():
                 img_data = ev.get('image_data')
                 if img_data: st.image(base64.b64decode(img_data), use_container_width=True)
                 st.write(ev.get('description', '')); st.divider()
+        else:
+            st.info("No events posted yet.")
 
     with tab4:
         st.subheader("🎯 Strategic KPI")
@@ -172,13 +197,14 @@ def main_dashboard():
         for jb in jabs:
             st.markdown(f"#### {jb}")
             if not kpi_df.empty:
-                # Safely grab the jabatan column
                 jab_col = 'jabatan' if 'jabatan' in kpi_df.columns else 'Jabatan'
                 desc_col = 'kpi_desc' if 'kpi_desc' in kpi_df.columns else 'KPI_desc'
                 
                 rows = kpi_df[kpi_df[jab_col] == jb]
                 for _, r in rows.iterrows(): 
                     st.write(f"• {r[desc_col]}")
+            if kpi_df.empty or rows.empty:
+                st.write("*No KPIs added yet.*")
 
 def login_screen():
     st.title("🔒 FTK Staff Portal")
