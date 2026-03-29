@@ -23,7 +23,6 @@ def init_db():
     try:
         conn = get_connection()
         cur = conn.cursor()
-        # Create tables without forcing quotes on single-word columns to avoid casing errors
         cur.execute('''CREATE TABLE IF NOT EXISTS students (
             id SERIAL PRIMARY KEY, "Student Name" TEXT, "Matrix Number" TEXT, 
             session TEXT, faculty TEXT, campus TEXT, programme TEXT, 
@@ -55,7 +54,7 @@ def load_query(query, params=None):
     except:
         return pd.DataFrame() 
 
-# --- 5. UTILITIES (AND EXCEL RESTORATION) ---
+# --- 5. UTILITIES ---
 def check_password(password, hashed_text):
     return hashlib.sha256(str.encode(password)).hexdigest() == hashed_text
 
@@ -71,7 +70,6 @@ def generate_template_excel():
 def create_radar_chart(row, title):
     cat_display = ['Global', 'Resilient', 'Innovative', 'Trustworthy', 'Talent']
     try:
-        # Check for both uppercase and lowercase keys just in case
         scr = [float(row.get(c, row.get(c.lower(), 50))) for c in cat_display]
         df_fig = pd.DataFrame(dict(r=scr + [scr[0]], theta=cat_display + [cat_display[0]]))
         fig = px.line_polar(df_fig, r='r', theta='theta', line_close=True, title=title)
@@ -86,10 +84,14 @@ def main_dashboard():
     l, r = st.columns([5, 1])
     l.title("🎓 FTK GRITT Dashboard (Supabase)")
     if r.button("Logout"):
-        st.session_state.update(logged_in=False)
+        st.session_state.update(logged_in=False, username="", role="lecturer")
         st.rerun()
     
+    # --- NEW: Visual Role Indicator ---
     is_admin = (st.session_state['role'] == 'admin')
+    role_icon = "🛡️ Admin" if is_admin else "👨‍🏫 Lecturer"
+    st.info(f"Welcome back, **{st.session_state['username']}**! You are logged in as: **{role_icon}**")
+    
     tab1, tab2, tab3, tab4 = st.tabs(["📊 Charts", "📝 Data Entry", "🏛️ Faculty Info", "🎯 KPI"])
     
     with tab1:
@@ -128,7 +130,6 @@ def main_dashboard():
                 g=sc[0].number_input("Global",0,100,50); res=sc[1].number_input("Resilient",0,100,50); i=sc[2].number_input("Innovative",0,100,50); t1=sc[3].number_input("Trustworthy",0,100,50); t2=sc[4].number_input("Talent",0,100,50)
                 if st.form_submit_button("Save Student"):
                     conn = get_connection(); cur = conn.cursor()
-                    # Using lowercase for standard columns to match Postgres defaults
                     cur.execute('''INSERT INTO students 
                         ("Student Name", "Matrix Number", session, faculty, campus, programme, global, resilient, innovative, trustworthy, talent) 
                         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''', 
@@ -146,12 +147,11 @@ def main_dashboard():
                         conn = get_connection(); cur = conn.cursor()
                         cur.execute('INSERT INTO events (title, description, image_data) VALUES (%s,%s,%s)', (et, ed, img_str))
                         conn.commit(); conn.close(); st.success("Posted!"); st.rerun()
+            else:
+                st.info("Only Admins can post faculty events.")
 
         st.divider()
-        # --- EXCEL BULK UPLOAD IS BACK ---
         st.header("📁 Bulk Upload (Excel)")
-        st.write("Need to upload a whole cohort? Download the template, fill it out, and upload it here.")
-        
         excel_data = generate_template_excel()
         st.download_button("📥 Download Excel Template", data=excel_data, file_name="student_template.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         
@@ -169,14 +169,33 @@ def main_dashboard():
                     conn.commit(); conn.close()
                     st.success("Bulk Upload Successful!"); st.rerun()
                 except Exception as e:
-                    st.error(f"Error during upload: Ensure your Excel matches the template headers exactly. Details: {e}")
+                    st.error(f"Error during upload. Details: {e}")
 
+        # --- ADMIN ONLY ZONE ---
         if is_admin:
             st.divider()
+            st.header("⚙️ Admin Settings & Controls")
             
-            st.header("⚙️ Admin Settings (GE & KPI)")
+            # NEW: User Account Creation
+            with st.expander("👤 Create New User Account"):
+                with st.form("create_user"):
+                    new_u = st.text_input("New Username")
+                    new_p = st.text_input("New Password", type="password")
+                    new_r = st.selectbox("Role", ["lecturer", "admin"])
+                    if st.form_submit_button("Create Account"):
+                        if new_u and new_p:
+                            hashed_p = hashlib.sha256(str.encode(new_p)).hexdigest()
+                            try:
+                                conn = get_connection(); cur = conn.cursor()
+                                cur.execute('INSERT INTO users (username, password, role) VALUES (%s, %s, %s)', (new_u, hashed_p, new_r))
+                                conn.commit(); conn.close()
+                                st.success(f"User '{new_u}' created successfully as {new_r}!")
+                            except:
+                                st.error("Username already exists or database error.")
+                        else:
+                            st.warning("Please fill in all fields.")
+
             c_ge, c_kp = st.columns(2)
-            
             with c_ge:
                 with st.form("admin_ge"):
                     st.subheader("Update GE %")
@@ -198,9 +217,8 @@ def main_dashboard():
                         cur.execute('INSERT INTO kpi_data (jabatan, kpi_desc) VALUES (%s,%s)', (jb, kd))
                         conn.commit(); conn.close(); st.success("KPI Added!"); st.rerun()
 
-            st.divider()
-            st.header("🗑️ Admin Deletion Center")
-            
+            st.write("---")
+            st.subheader("🗑️ Admin Deletion Center")
             del_t1, del_t2, del_t3, del_t4 = st.tabs(["👨‍🎓 Students", "📅 Events", "🎯 KPIs", "📈 GE Data"])
             
             with del_t1:
@@ -290,7 +308,6 @@ def login_screen():
     u, p = st.text_input("Username"), st.text_input("Password", type="password")
     if st.button("Login"):
         conn = get_connection(); cur = conn.cursor()
-        # PostgreSQL defaults column names to lowercase if created without quotes
         password_col = "password"
         role_col = "role"
         username_col = "username"
@@ -298,7 +315,7 @@ def login_screen():
         res = cur.fetchone(); conn.close()
         if res and check_password(p, res[0]):
             st.session_state.update(logged_in=True, username=u, role=res[1]); st.rerun()
-        else: st.error("Access Denied")
+        else: st.error("Access Denied or Incorrect Password")
 
 if not st.session_state['logged_in']: login_screen()
 else: main_dashboard()
