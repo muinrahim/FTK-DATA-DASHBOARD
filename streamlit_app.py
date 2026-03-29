@@ -60,8 +60,10 @@ def get_ge_data():
     return pd.read_sql_query("SELECT * FROM ge_data ORDER BY year ASC", conn)
 
 def get_kpi_data():
-    conn = sqlite3.connect('gritt_database.db')
-    return pd.read_sql_query("SELECT * FROM kpi_data", conn)
+    conn = get_connection()
+    df = pd.read_sql_query("SELECT * FROM kpi_data", conn)
+    conn.close()
+    return df
 
 # --- 6. EXCEL TEMPLATE ---
 @st.cache_data
