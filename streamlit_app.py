@@ -226,13 +226,32 @@ def main_dashboard():
                 if not df_view.empty:
                     name_col = 'Student Name' if 'Student Name' in df_view.columns else 'student name'
                     matrix_col = 'Matrix Number' if 'Matrix Number' in df_view.columns else 'matrix number'
-                    st.dataframe(df_view[['id', name_col, matrix_col]], use_container_width=True)
-                    target_id = st.number_input("Student ID to Delete", step=1, min_value=0, key="del_stu")
-                    if st.button("Delete Student", type="primary"):
-                        conn = get_connection(); cur = conn.cursor()
-                        cur.execute('DELETE FROM students WHERE id = %s', (target_id,))
-                        conn.commit(); conn.close(); st.rerun()
-                else: st.info("No students to delete.")
+                    
+                    # --- NEW: Search Bar for Deletion ---
+                    search_del = st.text_input("🔍 Search Name or Matrix to Delete:", key="search_del_input")
+                    
+                    # Filter the table based on search
+                    if search_del:
+                        mask = df_view[name_col].str.contains(search_del, case=False, na=False) | \
+                               df_view[matrix_col].str.contains(search_del, case=False, na=False)
+                        df_display = df_view[mask]
+                    else:
+                        df_display = df_view
+                    
+                    # Show the filtered table
+                    st.dataframe(df_display[['id', name_col, matrix_col]], use_container_width=True)
+                    
+                    # Delete Execution
+                    if not df_display.empty:
+                        target_id = st.number_input("Enter Student ID to Delete", step=1, min_value=0, key="del_stu")
+                        if st.button("Delete Student", type="primary"):
+                            conn = get_connection(); cur = conn.cursor()
+                            cur.execute('DELETE FROM students WHERE id = %s', (target_id,))
+                            conn.commit(); conn.close(); st.success("Student Deleted!"); st.rerun()
+                    else:
+                        st.warning("No students match your search.")
+                else: 
+                    st.info("No students to delete.")
 
             with del_t2:
                 ev_view = load_query('SELECT id, title FROM events')
