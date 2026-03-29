@@ -6,17 +6,25 @@ import io
 import hashlib
 import base64
 
-# --- PAGE CONFIG ---
+# --- 1. PAGE CONFIG ---
 st.set_page_config(page_title="UTHM FTK Dashboard", page_icon="🎓", layout="wide")
 
-# --- SECURITY & UTILITY FUNCTIONS ---
+# --- 2. SESSION STATE INITIALIZATION (CRITICAL: MUST BE AT TOP) ---
+if 'logged_in' not in st.session_state:
+    st.session_state['logged_in'] = False
+if 'username' not in st.session_state:
+    st.session_state['username'] = ""
+if 'role' not in st.session_state:
+    st.session_state['role'] = "lecturer"
+
+# --- 3. SECURITY & UTILITY FUNCTIONS ---
 def hash_password(password):
     return hashlib.sha256(str.encode(password)).hexdigest()
 
 def check_password(password, hashed_text):
     return hash_password(password) == hashed_text
 
-# --- DATABASE SETUP ---
+# --- 4. DATABASE SETUP ---
 def init_db():
     conn = sqlite3.connect('gritt_database.db')
     cursor = conn.cursor()
@@ -36,7 +44,7 @@ def init_db():
 
 init_db()
 
-# --- DATA LOADING ---
+# --- 5. DATA LOADING ---
 def load_data():
     conn = sqlite3.connect('gritt_database.db')
     df = pd.read_sql_query("SELECT rowid, * FROM students", conn)
@@ -55,7 +63,7 @@ def get_kpi_data():
     conn = sqlite3.connect('gritt_database.db')
     return pd.read_sql_query("SELECT * FROM kpi_data", conn)
 
-# --- EXCEL TEMPLATE GENERATOR ---
+# --- 6. EXCEL TEMPLATE ---
 @st.cache_data
 def generate_template_excel():
     template_df = pd.DataFrame(columns=['Student Name', 'Matrix Number', 'Session', 'Faculty', 'Campus', 'Programme', 'Global', 'Resilient', 'Innovative', 'Trustworthy', 'Talent'])
@@ -65,12 +73,12 @@ def generate_template_excel():
         template_df.to_excel(writer, index=False, sheet_name='Sheet1')
     return output.getvalue()
 
-# --- LOGIN SCREEN ---
+# --- 7. LOGIN SCREEN ---
 def login_screen():
     st.title("🔒 FTK Staff Portal")
     t1, t2 = st.tabs(["Login", "Register"])
     with t1:
-        with st.form("login_form_key"):
+        with st.form("login_form"):
             u = st.text_input("Username")
             p = st.text_input("Password", type="password")
             if st.form_submit_button("Login"):
@@ -82,8 +90,8 @@ def login_screen():
                     st.rerun()
                 else: st.error("Invalid credentials.")
     with t2:
-        with st.form("reg_form_key"):
-            nu, np, cp = st.text_input("New User"), st.text_input("New Pass", type="password"), st.text_input("Confirm", type="password")
+        with st.form("reg_form"):
+            nu, np, cp = st.text_input("New Username"), st.text_input("New Password", type="password"), st.text_input("Confirm Password", type="password")
             if st.form_submit_button("Register Account"):
                 if np == cp:
                     try:
@@ -94,7 +102,7 @@ def login_screen():
                     except: st.error("Username already exists.")
                 else: st.error("Passwords do not match.")
 
-# --- CHART GENERATOR ---
+# --- 8. CHART GENERATOR ---
 def create_radar_chart(row, title):
     cat = ['Global', 'Resilient', 'Innovative', 'Trustworthy', 'Talent']
     scr = [row['Global'], row['Resilient'], row['Innovative'], row['Trustworthy'], row['Talent']]
@@ -104,7 +112,7 @@ def create_radar_chart(row, title):
     fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100])), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
     return fig
 
-# --- MAIN DASHBOARD ---
+# --- 9. MAIN DASHBOARD ---
 def main_dashboard():
     l_col, r_col = st.columns([5, 1])
     l_col.title("🎓 FTK GRITT Dashboard")
@@ -115,7 +123,6 @@ def main_dashboard():
     
     t1, t2, t3, t4 = st.tabs(["📊 Charts", "📝 Data Entry", "🏛️ Faculty Info", "🎯 KPI Jabatan"])
     
-    # TAB 1: CHARTS
     with t1:
         df = load_data()
         df['Display'] = df['Student Name'] + " (" + df['Matrix Number'] + ")"
@@ -134,11 +141,9 @@ def main_dashboard():
                 sel = st.selectbox("Select Student:", f_df['Display'])
                 st.plotly_chart(create_radar_chart(f_df[f_df['Display'] == sel].iloc[0], sel), use_container_width=True)
 
-    # TAB 2: DATA ENTRY
     with t2:
         st.subheader("Add Student Data")
         st.download_button("📥 Download Excel Template", data=generate_template_excel(), file_name="FTK_Template.xlsx")
-        
         up = st.file_uploader("Upload Batch File (Excel/CSV)", type=["csv", "xlsx"])
         if up:
             try:
@@ -148,33 +153,30 @@ def main_dashboard():
                     conn = sqlite3.connect('gritt_database.db'); udf.to_sql('students', conn, if_exists='append', index=False); conn.close()
                     st.success("Batch uploaded!"); st.rerun()
             except Exception as e: st.error(e)
-            
         st.divider()
         with st.form("manual_entry_form"):
             st.markdown("### Manual Student Entry")
             c1, c2, c3 = st.columns(3)
-            name = c1.text_input("Name"); mat = c2.text_input("Matrix Number"); sess = c3.selectbox("Session", ["2024/2025", "2025/2026"])
+            name = c1.text_input("Name"); mat = c2.text_input("Matrix"); sess = c3.selectbox("Session", ["2024/2025", "2025/2026"])
             prog = st.text_input("Programme (e.g. KNT)")
             sc = st.columns(5)
-            g=sc[0].number_input("Global",0,100,50); r=sc[1].number_input("Resilient",0,100,50); i=sc[2].number_input("Innov",0,100,50); t1=sc[3].number_input("Trust",0,100,50); t2=sc[4].number_input("Talent",0,100,50)
+            g=sc[0].number_input("G",0,100,50); r=sc[1].number_input("R",0,100,50); i=sc[2].number_input("I",0,100,50); t1=sc[3].number_input("T1",0,100,50); t2=sc[4].number_input("T2",0,100,50)
             if st.form_submit_button("Save Student"):
                 conn = sqlite3.connect('gritt_database.db')
                 conn.execute('INSERT INTO students VALUES (?,?,?,?,?,?,?,?,?,?,?)', (name, mat, sess, 'FTK', 'Pagoh', prog, g, r, i, t1, t2))
-                conn.commit(); conn.close(); st.success("Student Saved!"); st.rerun()
+                conn.commit(); conn.close(); st.success("Saved!"); st.rerun()
 
-        # --- ADMIN DELETE SECTION ---
         if st.session_state['role'] == 'admin':
             st.divider()
-            st.markdown("### 🗑️ Admin: Manage Database & Delete Duplicates")
+            st.markdown("### 🗑️ Admin: Delete Duplicates")
             df_manage = load_data()
             st.dataframe(df_manage[['rowid', 'Student Name', 'Matrix Number', 'Session', 'Programme']], use_container_width=True)
-            rid = st.number_input("Enter RowID to Delete Permanently:", min_value=1, step=1)
+            rid = st.number_input("Enter RowID to Delete:", min_value=1, step=1)
             if st.button("❌ Execute Delete", type="primary"):
                 conn = sqlite3.connect('gritt_database.db')
                 conn.execute('DELETE FROM students WHERE rowid=?', (rid,))
                 conn.commit(); conn.close(); st.success(f"Row {rid} deleted!"); st.rerun()
 
-    # TAB 3: FACULTY INFO
     with t3:
         ca, cb = st.columns([1, 2])
         with ca:
@@ -184,8 +186,8 @@ def main_dashboard():
                 st.plotly_chart(px.line(g_df, x='year', y='percentage', markers=True, title="GE Trend").update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)'), use_container_width=True)
                 if st.session_state['role'] == 'admin':
                     with st.form("ge_form"):
-                        y = st.number_input("Year", 2020, 2100, 2025); p = st.number_input("GE Percentage (%)", 0.0, 100.0, 85.0)
-                        if st.form_submit_button("Update GE Data"):
+                        y = st.number_input("Year", 2020, 2100, 2025); p = st.number_input("%", 0.0, 100.0, 85.0)
+                        if st.form_submit_button("Update GE"):
                             conn = sqlite3.connect('gritt_database.db'); conn.execute('INSERT OR REPLACE INTO ge_data VALUES (?,?)', (y, p)); conn.commit(); conn.close(); st.rerun()
         with cb:
             st.markdown("### 📅 Official Programs")
@@ -195,11 +197,10 @@ def main_dashboard():
                 if ev['image_data']: st.image(base64.b64decode(ev['image_data']), use_container_width=True)
                 st.write(ev['description'])
                 if st.session_state['role'] == 'admin':
-                    if st.button("Delete Event", key=f"event_{ev['id']}"):
+                    if st.button("Delete Event", key=f"ev_{ev['id']}"):
                         conn = sqlite3.connect('gritt_database.db'); conn.execute('DELETE FROM events WHERE id=?', (ev['id'],)); conn.commit(); conn.close(); st.rerun()
                 st.divider()
 
-    # TAB 4: KPI
     with t4:
         st.subheader("🎯 KPI Jabatan Targets")
         k_df = get_kpi_data()
@@ -207,17 +208,19 @@ def main_dashboard():
         if st.session_state['role'] == 'admin':
             with st.expander("🛠️ Admin: Add New KPI"):
                 with st.form("kpi_add_form"):
-                    j = st.selectbox("Select Jabatan", jabs); d = st.text_area("Target Description")
+                    j = st.selectbox("Jabatan", jabs); d = st.text_area("Target Description")
                     if st.form_submit_button("Add KPI"):
                         conn = sqlite3.connect('gritt_database.db'); conn.execute('INSERT INTO kpi_data (jabatan, kpi_desc) VALUES (?,?)', (j, d)); conn.commit(); conn.close(); st.rerun()
         for jb in jabs:
             st.markdown(f"### {jb}")
-            jab_kpis = k_df[k_df['jabatan'] == jb]
-            for _, r in jab_kpis.iterrows():
+            for _, r in k_df[k_df['jabatan'] == jb].iterrows():
                 c1, c2 = st.columns([5, 1])
                 c1.write(f"• {r['kpi_desc']}")
                 if st.session_state['role'] == 'admin' and c2.button("Del", key=f"kpi_{r['id']}"):
                     conn = sqlite3.connect('gritt_database.db'); conn.execute('DELETE FROM kpi_data WHERE id=?', (r['id'],)); conn.commit(); conn.close(); st.rerun()
 
-if not st.session_state['logged_in']: login_screen()
-else: main_dashboard()
+# --- 10. APP ROUTING ---
+if not st.session_state['logged_in']:
+    login_screen()
+else:
+    main_dashboard()
